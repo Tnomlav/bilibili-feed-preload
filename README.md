@@ -2,7 +2,7 @@
 
 一个为 B站首页「换一换」提供后台预加载的单文件 Tampermonkey 脚本。
 
-**[下载并安装 bilibili-feed-preload.user.js](https://github.com/Tnomlav/bilibili-feed-preload/releases/download/v1.0.0/bilibili-feed-preload.user.js)**
+**[下载并安装 bilibili-feed-preload.user.js](https://github.com/Tnomlav/bilibili-feed-preload/releases/latest/download/bilibili-feed-preload.user.js)**
 
 ## 作用
 
@@ -13,6 +13,8 @@ B站首页自带的「换一换」通常只会替换前几张卡片。这个脚�
 ## 特点
 
 - 不额外打开浏览器标签页。
+- 除点击「换一换」外，也可以在不输入文字时单击 `R` 触发。
+- 输入框、文本域、下拉框、可编辑区域和输入法组合输入期间不会识别 `R`。
 - 预载完成后「换一换」按钮显示蓝色高亮。
 - 切换后推荐卡片继续加载。
 - 连续点击会合并处理，不会重复刷新。

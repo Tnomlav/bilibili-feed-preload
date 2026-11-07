@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站首页换一换预加载（单文件）
 // @namespace    https://github.com/Tnomlav/bilibili-feed-preload
-// @version      1.0.0
+// @version      1.1.0
 // @description  在隐藏页面中预载可继续加载的 B站首页，点击换一换时快速切换且不增加浏览器标签页。
 // @author       Tnomlav
 // @license      MIT
@@ -55,6 +55,62 @@
             target &&
                 typeof target.closest === 'function' &&
                 target.closest('.roll-btn, .feed-roll-btn'),
+        )
+    }
+
+    const isEditableNode = (node) => {
+        if (!node) {
+            return false
+        }
+        const tagName = node.tagName?.toLowerCase?.()
+        if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+            return true
+        }
+        if (node.isContentEditable) {
+            return true
+        }
+        return Boolean(
+            typeof node.closest === 'function' &&
+                node.closest(
+                    '[contenteditable=""], [contenteditable="true"], [role="textbox"], [role="combobox"]',
+                ),
+        )
+    }
+
+    const shouldTriggerByR = (event, doc) => {
+        if (
+            event.repeat ||
+            event.isComposing ||
+            event.keyCode === 229 ||
+            event.ctrlKey ||
+            event.altKey ||
+            event.metaKey ||
+            event.shiftKey
+        ) {
+            return false
+        }
+
+        const isR = event.code === 'KeyR' || event.key?.toLowerCase() === 'r'
+        if (!isR) {
+            return false
+        }
+
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : []
+        return ![...path, event.target, doc.activeElement].some(isEditableNode)
+    }
+
+    const bindShortcuts = (doc) => {
+        doc.addEventListener(
+            'keydown',
+            (event) => {
+                if (!shouldTriggerByR(event, doc)) {
+                    return
+                }
+                event.preventDefault()
+                event.stopImmediatePropagation()
+                void switchToNext()
+            },
+            true,
         )
     }
 
@@ -256,6 +312,7 @@
             },
             true,
         )
+        bindShortcuts(doc)
     }
 
     const waitForFrameReady = async (frame, timeoutMs) => {
@@ -442,6 +499,7 @@
         },
         true,
     )
+    bindShortcuts(document)
 
     const initialize = () => {
         if (!isHomePage()) {
