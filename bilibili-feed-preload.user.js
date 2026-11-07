@@ -14,7 +14,8 @@
 // @match        https://www.bilibili.com/index.html
 // @run-at       document-start
 // @noframes
-// @grant        none
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // ==/UserScript==
 
 (() => {
@@ -26,7 +27,6 @@
     const STYLE_ID = 'bili-feed-preload-style'
     const MODE_ATTRIBUTE = 'data-bili-feed-preload-active'
     const STATE_ATTRIBUTE = 'data-bili-feed-preload-state'
-    const SETTINGS_HOST_ID = 'bili-feed-preload-settings'
     const SETTINGS_KEY = 'bili-feed-preload.settings'
     const MIN_CARD_COUNT = 18
     const READY_TIMEOUT_MS = 12_000
@@ -43,10 +43,9 @@
     let cooldownUntil = 0
     let toastTimer = 0
     let capturingShortcut = false
-    let settingsHost = null
-    let shortcutButton = null
-    let shortcutToggle = null
-    let statusNode = null
+    let currentState = 'loading'
+    let menuCommandIds = []
+    let menuRegistered = false
 
     const defaultShortcut = {
         code: 'KeyR',
@@ -165,6 +164,15 @@
         doc.addEventListener(
             'keydown',
             (event) => {
+                if (capturingShortcut) {
+                    if (event.repeat) {
+                        return
+                    }
+                    event.preventDefault()
+                    event.stopImmediatePropagation()
+                    finishShortcutCapture(event)
+                    return
+                }
                 if (!shouldTriggerShortcut(event, doc)) {
                     return
                 }
@@ -303,161 +311,105 @@
         }
     }
 
-    const updateShortcutControls = () => {
-        if (shortcutButton) {
-            shortcutButton.textContent = capturingShortcut
-                ? '请按下新按键…'
-                : formatShortcut()
-        }
-        if (shortcutToggle) {
-            shortcutToggle.checked = settings.shortcutEnabled
-        }
-    }
-
-    const updateSettingsStatus = (state) => {
-        if (!statusNode) {
+    const registerMenuCommands = () => {
+        if (
+            typeof GM_registerMenuCommand !== 'function' ||
+            typeof GM_unregisterMenuCommand !== 'function'
+        ) {
             return
         }
-        const labels = {
+
+        for (const id of menuCommandIds) {
+            try {
+                GM_unregisterMenuCommand(id)
+            } catch {
+                // The menu may already have been removed after a page update.
+            }
+        }
+        menuCommandIds = []
+        menuRegistered = true
+
+        const statusLabels = {
             ready: '已就绪',
             loading: '预载中',
             error: '预载失败',
         }
-        statusNode.textContent = labels[state] || '未启动'
-        statusNode.dataset.state = state || ''
+        const status = statusLabels[currentState] || '未启动'
+        const shortcutStatus = settings.shortcutEnabled ? '已启用' : '已停用'
+
+        menuCommandIds.push(
+            GM_registerMenuCommand(
+                `⌨ 快捷键：${formatShortcut()}（${shortcutStatus}）`,
+                () => {
+                    settings.shortcutEnabled = !settings.shortcutEnabled
+                    saveSettings()
+                    registerMenuCommands()
+                    showToast(
+                        settings.shortcutEnabled
+                            ? `快捷键已启用：${formatShortcut()}`
+                            : '快捷键已停用',
+                    )
+                },
+            ),
+        )
+        menuCommandIds.push(
+            GM_registerMenuCommand(
+                capturingShortcut ? '⌨ 请按下新快捷键…' : '⚙ 更改快捷键…',
+                () => {
+                capturingShortcut = true
+                registerMenuCommands()
+                showToast('请在页面按下新的单键或组合键，按 Esc 取消', true)
+                },
+            ),
+        )
+        menuCommandIds.push(
+            GM_registerMenuCommand('↩ 恢复默认快捷键 R', () => {
+                capturingShortcut = false
+                settings.shortcut = { ...defaultShortcut }
+                settings.shortcutEnabled = true
+                saveSettings()
+                registerMenuCommands()
+                showToast('已恢复默认快捷键 R')
+            }),
+        )
+        menuCommandIds.push(
+            GM_registerMenuCommand(`● 预载状态：${status}`, () => {
+                if (currentState !== 'ready') {
+                    void prepareNextFrame()
+                }
+            }),
+        )
     }
 
-    const createSettingsUi = () => {
-        if (settingsHost?.isConnected) {
+    const finishShortcutCapture = (event) => {
+        if (event.key === 'Escape') {
+            capturingShortcut = false
+            hideToast()
+            registerMenuCommands()
+            return
+        }
+        if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
+            showToast('请再按一个非修饰键')
             return
         }
 
-        settingsHost = document.createElement('div')
-        settingsHost.id = SETTINGS_HOST_ID
-        settingsHost.style.cssText =
-            'position:fixed;right:16px;bottom:16px;z-index:2147483647;font-family:system-ui,sans-serif;'
-        const root = settingsHost.attachShadow({ mode: 'open' })
-        root.innerHTML = `
-            <style>
-                :host { all: initial; }
-                button, input { font: inherit; }
-                #toggle {
-                    width: 42px; height: 42px; margin-left: auto; display: block;
-                    border: 0; border-radius: 50%; color: #fff; background: #00aeec;
-                    box-shadow: 0 4px 16px rgba(0,0,0,.24); cursor: pointer; font-size: 20px;
-                }
-                #panel {
-                    position: absolute; right: 0; bottom: 52px; width: 242px;
-                    padding: 14px; border: 1px solid #d9e5ec; border-radius: 12px;
-                    background: #fff; color: #222; box-shadow: 0 10px 32px rgba(0,0,0,.2);
-                }
-                #panel[hidden] { display: none; }
-                header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-                header strong { font-size: 15px; }
-                #close { border: 0; background: transparent; font-size: 20px; cursor: pointer; color: #666; }
-                .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; }
-                #shortcut { min-width: 72px; padding: 6px 10px; border: 1px solid #b9d9e8; border-radius: 7px; background: #f3fbff; color: #087da8; cursor: pointer; }
-                #reset { width: 100%; margin-top: 8px; padding: 7px; border: 1px solid #d5dde3; border-radius: 7px; background: #f7f8fa; cursor: pointer; }
-                #status { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #edf1f4; color: #777; font-size: 12px; }
-                #status[data-state='ready'] { color: #078bb5; }
-                #status[data-state='error'] { color: #d93025; }
-                input[type='checkbox'] { width: 17px; height: 17px; accent-color: #00aeec; }
-            </style>
-            <button id="toggle" type="button" title="B站预刷新设置" aria-label="打开 B站预刷新设置">⚙</button>
-            <section id="panel" hidden>
-                <header>
-                    <strong>B站预刷新</strong>
-                    <button id="close" type="button" aria-label="关闭设置">×</button>
-                </header>
-                <label class="row">
-                    <span>启用快捷键</span>
-                    <input id="shortcut-enabled" type="checkbox">
-                </label>
-                <div class="row">
-                    <span>切换快捷键</span>
-                    <button id="shortcut" type="button"></button>
-                </div>
-                <button id="reset" type="button">恢复默认（R）</button>
-                <p>在非输入状态触发。点击快捷键后，按下新的单键或组合键。</p>
-                <div id="status"></div>
-            </section>
-        `
-        document.documentElement.append(settingsHost)
-
-        const panel = root.getElementById('panel')
-        const toggle = root.getElementById('toggle')
-        const close = root.getElementById('close')
-        shortcutButton = root.getElementById('shortcut')
-        shortcutToggle = root.getElementById('shortcut-enabled')
-        statusNode = root.getElementById('status')
-        const reset = root.getElementById('reset')
-
-        toggle.addEventListener('click', () => {
-            panel.hidden = !panel.hidden
-        })
-        close.addEventListener('click', () => {
-            panel.hidden = true
-            capturingShortcut = false
-            updateShortcutControls()
-        })
-        shortcutToggle.checked = settings.shortcutEnabled
-        shortcutToggle.addEventListener('change', () => {
-            settings.shortcutEnabled = shortcutToggle.checked
-            saveSettings()
-            updateShortcutControls()
-        })
-        shortcutButton.addEventListener('click', (event) => {
-            event.stopPropagation()
-            capturingShortcut = true
-            updateShortcutControls()
-            shortcutButton.focus()
-        })
-        root.addEventListener(
-            'keydown',
-            (event) => {
-                if (!capturingShortcut) {
-                    return
-                }
-                event.preventDefault()
-                event.stopImmediatePropagation()
-                if (event.key === 'Escape') {
-                    capturingShortcut = false
-                    updateShortcutControls()
-                    return
-                }
-                if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
-                    return
-                }
-
-                settings.shortcut = {
-                    code: event.code,
-                    key: event.key,
-                    ctrl: event.ctrlKey,
-                    alt: event.altKey,
-                    shift: event.shiftKey,
-                    meta: event.metaKey,
-                }
-                capturingShortcut = false
-                saveSettings()
-                updateShortcutControls()
-                showToast(`快捷键已改为 ${formatShortcut()}`)
-            },
-            true,
-        )
-        reset.addEventListener('click', () => {
-            capturingShortcut = false
-            settings.shortcut = { ...defaultShortcut }
-            settings.shortcutEnabled = true
-            saveSettings()
-            updateShortcutControls()
-            showToast('已恢复默认快捷键 R')
-        })
-
-        updateShortcutControls()
-        updateSettingsStatus(document.documentElement.getAttribute(STATE_ATTRIBUTE))
+        settings.shortcut = {
+            code: event.code,
+            key: event.key,
+            ctrl: event.ctrlKey,
+            alt: event.altKey,
+            shift: event.shiftKey,
+            meta: event.metaKey,
+        }
+        settings.shortcutEnabled = true
+        capturingShortcut = false
+        saveSettings()
+        registerMenuCommands()
+        showToast(`快捷键已改为 ${formatShortcut()}`)
     }
 
     const setState = (state) => {
+        currentState = state
         for (const doc of [
             document,
             activeFrame?.contentDocument,
@@ -469,7 +421,9 @@
             ensureButtonStyle(doc)
             doc.documentElement.setAttribute(STATE_ATTRIBUTE, state)
         }
-        updateSettingsStatus(state)
+        if (menuRegistered) {
+            registerMenuCommands()
+        }
     }
 
     const setFrameVisible = (frame, visible) => {
@@ -723,7 +677,7 @@
             return
         }
         ensureShellStyle()
-        createSettingsUi()
+        registerMenuCommands()
         ensureButtonStyle(document)
         setState('loading')
         void prepareNextFrame()
