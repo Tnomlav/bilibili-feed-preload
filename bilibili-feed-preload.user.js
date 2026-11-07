@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站预刷新
 // @namespace    https://github.com/Tnomlav/bilibili-feed-preload
-// @version      1.2.0
+// @version      1.2.1
 // @description  为 B站首页换一换提供后台预载、状态提示和自定义快捷键。
 // @author       Tnomlav
 // @license      MIT
